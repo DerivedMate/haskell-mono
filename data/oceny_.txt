@@ -1,0 +1,2 @@
+Id_oceny	Data	Id_ucznia	Id_przedmiotu	Ocena
+1	2014-09-08	704/2014	1	2
