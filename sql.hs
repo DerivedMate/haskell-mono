@@ -35,10 +35,13 @@ split t l fs = split t lr (f:fs)
         lr = drop 1 lr_
 
 strip :: String -> String
-strip l = takeWhile (oneOf (/=)) $ dropWhile (oneOf (==)) l
+strip l = filter (\c -> not $ elem c toStrip) l
+    where 
+        toStrip = [' ', '\r', '\\']
+    {-takeWhile (oneOf (/=)) $ dropWhile (oneOf (==)) l
     where 
         oneOf f c = all (f c) striped
-        striped = [' ', '\r', '\\']
+        striped = [' ', '\r', '\\']}-}
 
 fieldsOfLine :: Char -> String -> Fields
 fieldsOfLine t l = split t l []
@@ -88,8 +91,7 @@ typeOfField f
     | isDate f = QDate
     | isInt f = QInt
     | isDecimal f = 
-        let 
-            [p, q] = map length (split '.' f []) 
+        let [p, q] = map length (split '.' f []) 
         in QDecimal (p+q) q
     | isText f = QText
     | isChar f = QChar (length f)
@@ -133,12 +135,18 @@ processFile sep ls = return (fields, ts)
         -- ts = map (fieldsOfLine sep) entries
 
 makeSql :: Char -> String -> String -> String -> (Fields, Types) -> String
-makeSql sep filePath dbName tableName (fs, ts) = initLine ++ (Data.List.intercalate ",\n\t" $ map run rows) ++ endLine
+makeSql sep filePath dbName tableName (fs, ts) = 
+    initLine 
+    ++ (Data.List.intercalate ",\n\t" lns) 
+    ++ endLine
     where 
+        (_, lns) = foldl run (False, []) rows
         rows = zip fs ts :: [(String, Type)]
-        run (field, tp) = field ++ " " ++ (show tp) ++ key
+        run (hasId, acc) (field, tp) = (hasIdNew, acc++[str])
             where 
-                key = if isId field then " primary key" else ""
+                hasIdNew = not hasId && isId field
+                key = if hasIdNew then " primary key" else ""
+                str = field ++ " " ++ (show tp) ++ key
         initLine = printf 
             "create database if not exists %s;\nuse %s;\ncreate table %s (\n\t" 
             dbName dbName tableName :: String
@@ -147,6 +155,7 @@ makeSql sep filePath dbName tableName (fs, ts) = initLine ++ (Data.List.intercal
 
 
 -- Todo: rewrite to a do-block
+-- cmd: insertCsv "data/oceny.txt" '\t' "test"
 insertCsv :: FilePath -> Char -> String -> IO ()
 insertCsv path sep dbName = lsM >>= runner >>= (\a -> putStrLn $ makeSql sep path dbName tableName a)
     where
