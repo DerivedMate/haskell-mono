@@ -1,0 +1,2 @@
+data/oceny.txt
+data/uczniowie.txt

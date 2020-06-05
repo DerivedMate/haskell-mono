@@ -1,3 +1,4 @@
+module Main where
 import Data.Char
 import Data.List
 import System.IO
@@ -35,13 +36,18 @@ split t l fs = split t lr (f:fs)
         lr = drop 1 lr_
 
 strip :: String -> String
-strip l = filter (\c -> not $ elem c toStrip) l
-    where 
-        toStrip = [' ', '\r', '\\']
+strip l = filter (/='\r') l
+    -- where 
+        -- not $ elem c toStrip
+        -- toStrip = ['\r']
     {-takeWhile (oneOf (/=)) $ dropWhile (oneOf (==)) l
     where 
         oneOf f c = all (f c) striped
         striped = [' ', '\r', '\\']}-}
+removeSign :: String -> String
+removeSign ('-':l) = l
+removeSign ('+':l) = l
+removeSign l = l
 
 fieldsOfLine :: Char -> String -> Fields
 fieldsOfLine t l = split t l []
@@ -57,9 +63,15 @@ isDate l = all merger (zip parts matches)
         parts = split '-' l []
         matches = [isLen 4, isLen 2, isLen 2]
 
+isTime :: String -> Bool 
+isTime l = all merger (zip parts matches)
+    where
+        merger (p, m) = m p && all isDigit p
+        parts = map removeSign $ split ':' l []
+        matches = [isLen 3, isLen 2, isLen 2]
+
 isInt :: String -> Bool
-isInt ('-':n) = isInt n
-isInt n = all isDigit n
+isInt n = all isDigit (removeSign n)
 
 hasSpaces :: String -> Bool
 hasSpaces l = any (==' ') l
@@ -88,11 +100,12 @@ isId l =
 typeOfField :: String -> Type
 typeOfField f
     | "" == f = QNone
-    | isDate f = QDate
     | isInt f = QInt
     | isDecimal f = 
         let [p, q] = map length (split '.' f []) 
         in QDecimal (p+q) q
+    | isDate f = QDate
+    | isTime f = QTime
     | isText f = QText
     | isChar f = QChar (length f)
     | otherwise = QNone
@@ -114,7 +127,7 @@ merge (QVChar a, QChar b) = QVChar (max a b)
 merge (QVChar a, QVChar b) = QVChar (max a b) 
 merge (QDecimal p q, QInt) = QDecimal p q
 merge (QInt, QDecimal p q) = QDecimal p q
-merge (a, b) = a
+merge (a, _) = a
     
 
 mergeTypes :: Types -> Types -> Types
@@ -124,7 +137,7 @@ getTypes :: Char -> [String] -> Types -> Types
 getTypes _ [] ts = ts
 getTypes sep (l:ls) ts = getTypes sep ls (mergeTypes ts newTypes)
     where 
-        newTypes = typesOfLine sep (strip l) :: Types
+        newTypes = typesOfLine sep l :: Types
 
 processFile :: Char -> [String] -> IO (Fields, Types)
 processFile sep ls = return (fields, ts)
@@ -142,22 +155,29 @@ makeSql sep filePath dbName tableName (fs, ts) =
     where 
         (_, lns) = foldl run (False, []) rows
         rows = zip fs ts :: [(String, Type)]
-        run (hasId, acc) (field, tp) = (hasIdNew, acc++[str])
+        run (hadId, acc) (field, tp) = (hasId || hadId, acc++[str])
             where 
-                hasIdNew = not hasId && isId field
-                key = if hasIdNew then " primary key" else ""
+                isAnId = isId field
+                hasId = (not hadId) && isAnId
+                key = 
+                    if hasId 
+                        then " primary key" 
+                    else if isAnId 
+                        then " not null" 
+                    else ""
                 str = field ++ " " ++ (show tp) ++ key
         initLine = printf 
-            "create database if not exists %s;\nuse %s;\ncreate table %s (\n\t" 
-            dbName dbName tableName :: String
-        endLine = printf "\n);\nset global local_infile = True;\nload data local infile '%s' into table %s fields terminated by '%c' ignore 1 lines;\n" 
+            "create table if not exists %s (\n\t" 
+            tableName
+        endLine = printf "\n);\nload data local infile '%s' into table %s fields terminated by '%c' ignore 1 lines;" 
             filePath tableName sep
 
-
--- Todo: rewrite to a do-block
--- cmd: insertCsv "data/oceny.txt" '\t' "test"
-insertCsv :: FilePath -> Char -> String -> IO ()
-insertCsv path sep dbName = lsM >>= runner >>= (\a -> putStrLn $ makeSql sep path dbName tableName a)
+-- Todo: rewrite to a do-block (?)
+insertCsv :: String -> Char -> FilePath -> IO (String)
+insertCsv dbName sep path = 
+    lsM 
+    >>= runner 
+    >>= (\a -> return $ makeSql sep path dbName tableName a)
     where
         runner ls = processFile sep ls :: IO (Fields, Types)
         f = openFile path ReadMode -- "data/oceny.txt"
@@ -166,3 +186,26 @@ insertCsv path sep dbName = lsM >>= runner >>= (\a -> putStrLn $ makeSql sep pat
             >>= hGetContents 
             >>= (return . map toLower) 
             >>= (\c -> return $ map strip (lines c)) :: IO [String]
+
+
+readPaths :: FilePath -> IO [String]
+readPaths src = fh >>= hGetContents >>= (\ls-> return $ map strip $ lines ls)
+    where
+        fh = openFile src ReadMode
+
+outputCode :: String -> [IO String] -> IO ()
+outputCode dbName ms = (forM ms id) >>= go
+    where 
+        go ps = 
+            let code = intercalate "\n" ps
+            in putStrLn $ printf 
+            "create database if not exists %s;\nuse %s;\nset global local_infile = True;\n%s"
+            dbName dbName code
+        
+
+main :: IO ()
+main = do
+    arr@[path, sep_, dbName] <- getArgs
+    sep <- return $ (\(s:_) -> s) sep_
+    paths <- readPaths path
+    outputCode dbName $ map (insertCsv dbName sep) paths
