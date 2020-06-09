@@ -10,18 +10,26 @@ type Fields = [String]
 data Type = 
     QNone
     | QDecimal Int Int 
+    | QTInt
+    | QSInt
+    | QMInt
     | QInt 
+    | QBInt
     | QText 
     | QVChar Int
     | QChar Int
     | QTime
     | QDate 
-    deriving (Eq)
+    deriving (Eq, Ord)
 type Types = [Type]
 instance Show Type where 
     show QNone = ""
     show (QDecimal p q) = printf "decimal(%i, %i)" p q
     show QInt = "int"
+    show QTInt = "tinyint"
+    show QSInt = "smallint"
+    show QMInt = "mediumint"
+    show QBInt = "bigint"
     show QText = "text"
     show (QVChar n) = "varchar(" ++ (show n) ++ ")"
     show (QChar n) = "char(" ++ (show n) ++ ")"
@@ -44,6 +52,9 @@ strip l = filter (/='\r') l
     where 
         oneOf f c = all (f c) striped
         striped = [' ', '\r', '\\']}-}
+linesOfContent :: String -> [String]
+linesOfContent = map strip . lines
+
 removeSign :: String -> String
 removeSign ('-':l) = l
 removeSign ('+':l) = l
@@ -100,7 +111,13 @@ isId l =
 typeOfField :: String -> Type
 typeOfField f
     | "" == f = QNone
-    | isInt f = QInt
+    | isInt f = let g = abs $ read f 
+        in if g <= 1 then QTInt else QInt
+        {-in if   g <= 127         then QTInt
+        else if g <= 32767       then QSInt
+        else if g <= 8388607     then QMInt
+        else if g <= 2147483647  then QInt
+        else                     QBInt-}
     | isDecimal f = 
         let [p, q] = map length (split '.' f []) 
         in QDecimal (p+q) q
@@ -127,6 +144,7 @@ merge (QVChar a, QChar b) = QVChar (max a b)
 merge (QVChar a, QVChar b) = QVChar (max a b) 
 merge (QDecimal p q, QInt) = QDecimal p q
 merge (QInt, QDecimal p q) = QDecimal p q
+merge (QTInt, QInt) = QInt
 merge (a, _) = a
     
 
@@ -134,9 +152,11 @@ mergeTypes :: Types -> Types -> Types
 mergeTypes old new = map merge $ zip old new
 
 getTypes :: Char -> [String] -> Types -> Types
-getTypes _ [] ts = ts
-getTypes sep (l:ls) ts = getTypes sep ls (mergeTypes ts newTypes)
+-- getTypes _ [] ts = ts
+getTypes sep (l:ls) ts = foldl' go ts ls
+    -- getTypes sep ls (mergeTypes ts newTypes)
     where 
+        go ts l = mergeTypes ts $ typesOfLine sep l
         newTypes = typesOfLine sep l :: Types
 
 processFile :: Char -> [String] -> IO (Fields, Types)
@@ -155,57 +175,52 @@ makeSql sep filePath dbName tableName (fs, ts) =
     where 
         (_, lns) = foldl run (False, []) rows
         rows = zip fs ts :: [(String, Type)]
-        run (hadId, acc) (field, tp) = (hasId || hadId, acc++[str])
+        run (hadId, acc) (field, tp) = (isPrimary || hadId, acc++[str])
             where 
-                isAnId = isId field
-                hasId = (not hadId) && isAnId
+                hasId = isId field
+                isPrimary = (not hadId) && hasId
                 key = 
-                    if hasId 
-                        then " primary key" 
-                    else if isAnId 
-                        then " not null" 
-                    else ""
+                    if isPrimary then   " primary key" 
+                    else if hasId then  " not null" 
+                    else                ""
                 str = field ++ " " ++ (show tp) ++ key
         initLine = printf 
-            "create table if not exists %s (\n\t" 
+            "create table if not exists `%s` (\n\t" 
             tableName
-        endLine = printf "\n);\nload data local infile '%s' into table %s fields terminated by '%c' ignore 1 lines;" 
+        endLine = printf "\n);\nload data local infile '%s' into table `%s` fields terminated by '%c' ignore 1 lines;\n" 
             filePath tableName sep
 
 -- Todo: rewrite to a do-block (?)
 insertCsv :: String -> Char -> FilePath -> IO (String)
 insertCsv dbName sep path = 
     lsM 
-    >>= runner 
-    >>= (\a -> return $ makeSql sep path dbName tableName a)
+    >>= go 
+    >>= (return . makeSql sep path dbName tableName)
     where
-        runner ls = processFile sep ls :: IO (Fields, Types)
+        go ls = processFile sep ls :: IO (Fields, Types)
         f = openFile path ReadMode -- "data/oceny.txt"
         tableName = reverse $ takeWhile (/='/') $ drop 1 $ dropWhile (/='.') (reverse path)
         lsM = f 
             >>= hGetContents 
-            >>= (return . map toLower) 
-            >>= (\c -> return $ map strip (lines c)) :: IO [String]
-
+            >>= (return . (take 25000) . linesOfContent) :: IO [String]
+        _ = f >>= return . hClose 
+-- 
 
 readPaths :: FilePath -> IO [String]
-readPaths src = fh >>= hGetContents >>= (\ls-> return $ map strip $ lines ls)
+readPaths src = fh >>= hGetContents >>= (return . linesOfContent)
     where
         fh = openFile src ReadMode
 
-outputCode :: String -> [IO String] -> IO ()
-outputCode dbName ms = (forM ms id) >>= go
-    where 
-        go ps = 
-            let code = intercalate "\n" ps
-            in putStrLn $ printf 
-            "create database if not exists %s;\nuse %s;\nset global local_infile = True;\n%s"
-            dbName dbName code
-        
+codifyPath :: String -> Char -> String -> IO ()
+codifyPath dbName sep p = insertCsv dbName sep p 
+    >>= printer
+    where printer q = putStrLn (q++"\n")
 
 main :: IO ()
 main = do
     arr@[path, sep_, dbName] <- getArgs
     sep <- return $ (\(s:_) -> s) sep_
     paths <- readPaths path
-    outputCode dbName $ map (insertCsv dbName sep) paths
+    printf "create database if not exists %s;\nuse %s;\nset global local_infile = True;\n\n" dbName dbName
+    forM_ paths (codifyPath dbName sep)
+    return ()

@@ -1,2 +1,3 @@
 data/oceny.txt
+data/przedmioty.txt
 data/uczniowie.txt
