@@ -5,6 +5,7 @@ import System.IO
 import Control.Monad
 import System.Environment   
 import Text.Printf
+import LineReader
 
 type Fields = [String]
 data Type = 
@@ -133,23 +134,23 @@ typesOfLine sep l = map typeOfField fields
     where 
         fields = fieldsOfLine sep l
     
-merge :: (Type, Type) -> Type
-merge (QNone, new) = new
-merge (_, QText) = QText
-merge (QChar a, QChar b) = 
+merge :: Type -> Type -> Type
+merge QNone new = new
+merge _ QText = QText
+merge (QChar a) (QChar b) = 
     if a /= b 
         then QVChar (max a b) 
     else QChar b
-merge (QVChar a, QChar b) = QVChar (max a b)
-merge (QVChar a, QVChar b) = QVChar (max a b) 
-merge (QDecimal p q, QInt) = QDecimal p q
-merge (QInt, QDecimal p q) = QDecimal p q
-merge (QTInt, QInt) = QInt
-merge (a, _) = a
+merge (QVChar a) (QChar b) = QVChar (max a b)
+merge (QVChar a) (QVChar b) = QVChar (max a b) 
+merge (QDecimal p q) QInt = QDecimal p q
+merge QInt (QDecimal p q) = QDecimal p q
+merge QTInt QInt = QInt
+merge a _ = a
     
 
 mergeTypes :: Types -> Types -> Types
-mergeTypes old new = map merge $ zip old new
+mergeTypes old new = zipWith merge old new
 
 getTypes :: Char -> [String] -> Types -> Types
 getTypes sep (l:ls) ts = foldl' go ts ls
@@ -163,17 +164,16 @@ processFile sep ls = (fields, ts)
         (headerLine : entries) = ls
         fields = fieldsOfLine sep (map toLower headerLine)
         ts = getTypes sep entries (replicate (length fields) QNone)
-        -- ts = map (fieldsOfLine sep) entries
 
 makeSql :: Char -> String -> String -> String -> (Fields, Types) -> String
 makeSql sep filePath dbName tableName (fs, ts) = 
     initLine 
-    ++ (Data.List.intercalate ",\n\t" lns) 
+    ++ (intercalate ",\n\t" lns) 
     ++ endLine
     where 
-        (_, lns) = foldl' run (False, []) rows
+        (_, lns) = mapAccumL run False rows 
         rows = zip fs ts :: [(String, Type)]
-        run (hadId, acc) (field, tp) = (isPrimary || hadId, acc++[str])
+        run hadId (field, tp) = (isPrimary || hadId, str)
             where 
                 hasId = isId field
                 isPrimary = (not hadId) && hasId
@@ -190,7 +190,8 @@ makeSql sep filePath dbName tableName (fs, ts) =
 
 -- Todo: rewrite to a do-block (?)
 insertCsv :: String -> Char -> FilePath -> IO (String)
-insertCsv dbName sep path = f 
+insertCsv dbName sep path = 
+    f 
     >>= hGetContents
     >>= return 
         . (makeSql sep path dbName tableName) 
@@ -208,19 +209,20 @@ insertCsv dbName sep path = f
 -- 
 
 readPaths :: FilePath -> IO [String]
-readPaths src = fh >>= hGetContents >>= (return . linesOfContent)
-    where
-        fh = openFile src ReadMode
+readPaths src =
+    openFile src ReadMode
+    >>= hGetContents 
+    >>= (return . linesOfContent)
 
 codifyPath :: String -> Char -> String -> IO ()
-codifyPath dbName sep p = insertCsv dbName sep p 
-    >>= printer
-    where printer q = putStrLn (q++"\n")
+codifyPath dbName sep p = 
+    insertCsv dbName sep p 
+    >>= putStrLn . ("\n"++)
 
 main :: IO ()
 main = do
     [path, sep_, dbName] <- getArgs
-    sep <- return $ (\(s:_) -> s) sep_
+    sep <- return $ head sep_
     paths <- readPaths path
     printf "create database if not exists %s;\nuse %s;\nset global local_infile = True;\n\n" dbName dbName
     forM_ paths (codifyPath dbName sep)
