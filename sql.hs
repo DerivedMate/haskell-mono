@@ -152,18 +152,16 @@ mergeTypes :: Types -> Types -> Types
 mergeTypes old new = map merge $ zip old new
 
 getTypes :: Char -> [String] -> Types -> Types
--- getTypes _ [] ts = ts
 getTypes sep (l:ls) ts = foldl' go ts ls
-    -- getTypes sep ls (mergeTypes ts newTypes)
     where 
         go ts l = mergeTypes ts $ typesOfLine sep l
         newTypes = typesOfLine sep l :: Types
 
-processFile :: Char -> [String] -> IO (Fields, Types)
-processFile sep ls = return (fields, ts)
+processFile :: Char -> [String] -> (Fields, Types)
+processFile sep ls = (fields, ts)
     where 
         (headerLine : entries) = ls
-        fields = fieldsOfLine sep headerLine
+        fields = fieldsOfLine sep (map toLower headerLine)
         ts = getTypes sep entries (replicate (length fields) QNone)
         -- ts = map (fieldsOfLine sep) entries
 
@@ -173,7 +171,7 @@ makeSql sep filePath dbName tableName (fs, ts) =
     ++ (Data.List.intercalate ",\n\t" lns) 
     ++ endLine
     where 
-        (_, lns) = foldl run (False, []) rows
+        (_, lns) = foldl' run (False, []) rows
         rows = zip fs ts :: [(String, Type)]
         run (hadId, acc) (field, tp) = (isPrimary || hadId, acc++[str])
             where 
@@ -192,18 +190,21 @@ makeSql sep filePath dbName tableName (fs, ts) =
 
 -- Todo: rewrite to a do-block (?)
 insertCsv :: String -> Char -> FilePath -> IO (String)
-insertCsv dbName sep path = 
-    lsM 
-    >>= go 
-    >>= (return . makeSql sep path dbName tableName)
+insertCsv dbName sep path = f 
+    >>= hGetContents
+    >>= return 
+        . (makeSql sep path dbName tableName) 
+        . go 
+        . (take 200000) 
+        . linesOfContent
     where
-        go ls = processFile sep ls :: IO (Fields, Types)
+        go ls = processFile sep ls :: (Fields, Types)
         f = openFile path ReadMode -- "data/oceny.txt"
-        tableName = reverse $ takeWhile (/='/') $ drop 1 $ dropWhile (/='.') (reverse path)
-        lsM = f 
-            >>= hGetContents 
-            >>= (return . (take 25000) . linesOfContent) :: IO [String]
-        _ = f >>= return . hClose 
+        tableName = reverse 
+            $ takeWhile (/='/') 
+            $ tail 
+            $ dropWhile (/='.') (reverse path)    
+        -- _ = f >>= hFlush 
 -- 
 
 readPaths :: FilePath -> IO [String]
@@ -218,7 +219,7 @@ codifyPath dbName sep p = insertCsv dbName sep p
 
 main :: IO ()
 main = do
-    arr@[path, sep_, dbName] <- getArgs
+    [path, sep_, dbName] <- getArgs
     sep <- return $ (\(s:_) -> s) sep_
     paths <- readPaths path
     printf "create database if not exists %s;\nuse %s;\nset global local_infile = True;\n\n" dbName dbName
