@@ -176,7 +176,7 @@ makeSql sep filePath dbName tableName fs ts =
             filePath tableName sep
 
 extractTypes :: Handle -> Char -> Fields -> IO Types
-extractTypes fh sep fields = foldFile go fh acc
+extractTypes fh sep fields = foldFileN go fh acc 500000
     where 
         acc = replicate (length fields) QNone
         go ts line = seq line $ mergeTypes ts $ typesOfLine sep line
