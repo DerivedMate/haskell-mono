@@ -5,7 +5,7 @@ use strict;
 my $in = shift;
 my ($out) = ($in =~ /(\w+)\.hs$/);
 
-my $err = system "ghc $in";
+my $err = system "ghc -threaded $in";
 die $! if $err;
 
 $err = system "chmod +x $out";

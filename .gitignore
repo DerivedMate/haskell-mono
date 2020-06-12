@@ -3,3 +3,4 @@
 .vstags
 **/*.tsv
 *.tsv
+data_semi

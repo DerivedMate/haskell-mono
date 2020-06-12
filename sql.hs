@@ -39,13 +39,13 @@ instance Show Type where
 
 split :: Char -> String -> [String] -> [String]
 split t "" fs = reverse fs
-split t l fs = split t lr (f:fs)
+split t l fs = seq fs $ split t lr (f:fs)
     where
         (f, lr_) = break (==t) l
         lr = drop 1 lr_
 
 strip :: String -> String
-strip l = filter (/='\r') l
+strip l = seq l $ filter (/='\r') l
     -- where 
         -- not $ elem c toStrip
         -- toStrip = ['\r']
@@ -150,23 +150,10 @@ merge a _ = a
     
 
 mergeTypes :: Types -> Types -> Types
-mergeTypes old new = zipWith merge old new
+mergeTypes old new = seq old $ zipWith merge old new
 
-getTypes :: Char -> [String] -> Types -> Types
-getTypes sep (l:ls) ts = foldl' go ts ls
-    where 
-        go ts l = mergeTypes ts $ typesOfLine sep l
-        newTypes = typesOfLine sep l :: Types
-
-processFile :: Char -> [String] -> (Fields, Types)
-processFile sep ls = (fields, ts)
-    where 
-        (headerLine : entries) = ls
-        fields = fieldsOfLine sep (map toLower headerLine)
-        ts = getTypes sep entries (replicate (length fields) QNone)
-
-makeSql :: Char -> String -> String -> String -> (Fields, Types) -> String
-makeSql sep filePath dbName tableName (fs, ts) = 
+makeSql :: Char -> String -> String -> String -> Fields -> Types -> String
+makeSql sep filePath dbName tableName fs ts = 
     initLine 
     ++ (intercalate ",\n\t" lns) 
     ++ endLine
@@ -188,25 +175,27 @@ makeSql sep filePath dbName tableName (fs, ts) =
         endLine = printf "\n);\nload data local infile '%s' into table `%s` fields terminated by '%c' ignore 1 lines;\n" 
             filePath tableName sep
 
--- Todo: rewrite to a do-block (?)
+extractTypes :: Handle -> Char -> Fields -> IO Types
+extractTypes fh sep fields = foldFile go fh acc
+    where 
+        acc = replicate (length fields) QNone
+        go ts line = seq line $ mergeTypes ts $ typesOfLine sep line
+
 insertCsv :: String -> Char -> FilePath -> IO (String)
-insertCsv dbName sep path = 
-    f 
-    >>= hGetContents
-    >>= return 
-        . (makeSql sep path dbName tableName) 
-        . go 
-        . (take 200000) 
-        . linesOfContent
-    where
-        go ls = processFile sep ls :: (Fields, Types)
-        f = openFile path ReadMode -- "data/oceny.txt"
+insertCsv dbName sep path = do
+    f <- openFile path ReadMode
+    fields <- hGetLine f 
+        >>= return 
+        . fieldsOfLine sep 
+        . strip 
+        . map toLower 
+    types <- extractTypes f sep fields
+    return $ makeSql sep path dbName tableName fields types
+    where 
         tableName = reverse 
             $ takeWhile (/='/') 
             $ tail 
-            $ dropWhile (/='.') (reverse path)    
-        -- _ = f >>= hFlush 
--- 
+            $ dropWhile (/='.') (reverse path)
 
 readPaths :: FilePath -> IO [String]
 readPaths src =
