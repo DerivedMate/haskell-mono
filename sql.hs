@@ -75,12 +75,15 @@ isDate l = all merger (zip parts matches)
         parts = split '-' l []
         matches = [isLen 4, isLen 2, isLen 2]
 
+(<|>) :: (String -> Bool) -> (String -> Bool) -> String -> Bool
+(<|>) a b c = a c || b c
+
 isTime :: String -> Bool 
 isTime l = all merger (zip parts matches)
     where
         merger (p, m) = m p && all isDigit p
         parts = map removeSign $ split ':' l []
-        matches = [isLen 3, isLen 2, isLen 2]
+        matches = [isLen 3 <|> isLen 2, isLen 2, isLen 2]
 
 isInt :: String -> Bool
 isInt n = all isDigit (removeSign n)
