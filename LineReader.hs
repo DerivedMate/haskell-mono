@@ -19,17 +19,14 @@ foldFile :: (a -> Line -> a) -> Handle -> a -> IO a
 foldFile f fh acc0 = hGetLine fh >>= go f fh acc0 
 
 
-goN :: (a -> Line -> a)
-      -> Handle 
-      -> a
-      -> Int
-      -> Line 
-      -> IO a
-goN f fh acc n line = do
-    finish <- hIsEOF fh
-    if finish || n <= 0 then return acc
-    else hGetLine fh >>= (seq acc' . goN f fh acc' (n-1))
-    where acc' = seq line $ f acc line
-
 foldFileN :: (a -> Line -> a) -> Handle -> a -> Int -> IO a
-foldFileN f fh acc0 n = hGetLine fh >>= goN f fh acc0 n 
+foldFileN f fh acc0 n = hGetLine fh 
+    >>= goN f fh acc0 n 
+    where 
+        goN f fh acc n line = do
+            finish <- hIsEOF fh
+            if finish || n <= 0 
+                then return acc
+            else hGetLine fh 
+                >>= (seq acc' . goN f fh acc' (n-1))
+                where acc' = f acc line

@@ -21,6 +21,7 @@ data Type =
     | QChar Int
     | QTime
     | QDate 
+    | QDateTime
     deriving (Eq, Ord)
 type Types = [Type]
 instance Show Type where 
@@ -39,13 +40,13 @@ instance Show Type where
 
 split :: Char -> String -> [String] -> [String]
 split t "" fs = reverse fs
-split t l fs = seq fs $ split t lr (f:fs)
+split t l fs = split t lr (f:fs)
     where
         (f, lr_) = break (==t) l
         lr = drop 1 lr_
 
 strip :: String -> String
-strip l = seq l $ filter (/='\r') l
+strip l =   filter (/='\r') l
     -- where 
         -- not $ elem c toStrip
         -- toStrip = ['\r']
@@ -75,14 +76,17 @@ isDate l = all merger (zip parts matches)
         parts = split '-' l []
         matches = [isLen 4, isLen 2, isLen 2]
 
-(<|>) :: (String -> Bool) -> (String -> Bool) -> String -> Bool
+(<|>) :: (a -> Bool) -> (a -> Bool) -> a -> Bool
 (<|>) a b c = a c || b c
+
+(<&>) :: (a -> Bool) -> (a -> Bool) -> a -> Bool
+(<&>) f g l = f l && g l
 
 isTime :: String -> Bool 
 isTime l = all merger (zip parts matches)
     where
         merger (p, m) = m p && all isDigit p
-        parts = map removeSign $ split ':' l []
+        parts =  map removeSign $ split ':' l []
         matches = [isLen 3 <|> isLen 2, isLen 2, isLen 2]
 
 isInt :: String -> Bool
@@ -95,13 +99,22 @@ isText :: String -> Bool
 isText l = length l > 255 && any isLetter l
 
 isChar :: String -> Bool
-isChar l = length l <= 255 && (any (not . isDigit) l || hasSpaces l)
+isChar l = length l <= 255 
+    && (any (not . isDigit) <|> hasSpaces) l
 
 isDecimal :: String -> Bool
 isDecimal l = numberIsh && twoPart
     where 
-        numberIsh = all (\c -> isDigit c || c == '.') l
+        numberIsh = all (isDigit <&> (=='.')) l
         twoPart = length (split '.' l [] ) == 2
+
+isDateTime :: String -> Bool
+isDateTime l = isLen2 && (all merger $ zip parts matches)
+    where
+        merger (p, m) = m p
+        parts = split ' ' l []
+        isLen2 = length parts == 2
+        matches = [isDate, isTime]
 
 isId :: String -> Bool
 isId "id" = True
@@ -127,6 +140,7 @@ typeOfField f
         in QDecimal (p+q) q
     | isDate f = QDate
     | isTime f = QTime
+    | isDateTime f = QDateTime
     | isText f = QText
     | isChar f = QChar (length f)
     | otherwise = QNone
@@ -153,7 +167,7 @@ merge a _ = a
     
 
 mergeTypes :: Types -> Types -> Types
-mergeTypes old new = seq old $ zipWith merge old new
+mergeTypes old new = zipWith merge old new
 
 makeSql :: Char -> String -> String -> String -> Fields -> Types -> String
 makeSql sep filePath dbName tableName fs ts = 
@@ -161,8 +175,8 @@ makeSql sep filePath dbName tableName fs ts =
     ++ (intercalate ",\n\t" lns) 
     ++ endLine
     where 
-        (_, lns) = mapAccumL run False rows 
         rows = zip fs ts :: [(String, Type)]
+        (_, lns) = mapAccumL run False rows 
         run hadId (field, tp) = (isPrimary || hadId, str)
             where 
                 hasId = isId field
@@ -182,7 +196,7 @@ extractTypes :: Handle -> Char -> Fields -> IO Types
 extractTypes fh sep fields = foldFileN go fh acc 500000
     where 
         acc = replicate (length fields) QNone
-        go ts line = seq line $ mergeTypes ts $ typesOfLine sep line
+        go ts line = mergeTypes ts $ typesOfLine sep line
 
 insertCsv :: String -> Char -> FilePath -> IO (String)
 insertCsv dbName sep path = do
