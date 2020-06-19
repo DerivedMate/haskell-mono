@@ -37,6 +37,13 @@ instance Show Type where
     show (QChar n) = "char(" ++ (show n) ++ ")"
     show QTime = "time"
     show QDate = "date"
+    show QDateTime = "datetime"
+
+(<|>) :: (a -> Bool) -> (a -> Bool) -> a -> Bool
+(<|>) a b c = a c || b c
+
+(<&>) :: (a -> Bool) -> (a -> Bool) -> a -> Bool
+(<&>) f g l = f l && g l
 
 split :: Char -> String -> [String] -> [String]
 split t "" fs = reverse fs
@@ -46,7 +53,11 @@ split t l fs = split t lr (f:fs)
         lr = drop 1 lr_
 
 strip :: String -> String
-strip l =   filter (/='\r') l
+strip l =  filter 
+    (foldl1 
+        (<&>) 
+        $ map (/=) ['\r', '\n']
+    ) l
     -- where 
         -- not $ elem c toStrip
         -- toStrip = ['\r']
@@ -76,12 +87,6 @@ isDate l = all merger (zip parts matches)
         parts = split '-' l []
         matches = [isLen 4, isLen 2, isLen 2]
 
-(<|>) :: (a -> Bool) -> (a -> Bool) -> a -> Bool
-(<|>) a b c = a c || b c
-
-(<&>) :: (a -> Bool) -> (a -> Bool) -> a -> Bool
-(<&>) f g l = f l && g l
-
 isTime :: String -> Bool 
 isTime l = all merger (zip parts matches)
     where
@@ -100,13 +105,14 @@ isText l = length l > 255 && any isLetter l
 
 isChar :: String -> Bool
 isChar l = length l <= 255 
-    && (any (not . isDigit) <|> hasSpaces) l
+    && (any (not . (isDigit <|> (=='.'))) <|> hasSpaces) l
 
 isDecimal :: String -> Bool
 isDecimal l = numberIsh && twoPart
     where 
-        numberIsh = all (isDigit <&> (=='.')) l
-        twoPart = length (split '.' l [] ) == 2
+        parts = split '.' l []
+        numberIsh = all (all isDigit) parts
+        twoPart = length parts == 2
 
 isDateTime :: String -> Bool
 isDateTime l = isLen2 && (all merger $ zip parts matches)
@@ -126,7 +132,7 @@ isId l =
         otherwise -> False
             
 typeOfField :: String -> Type
-typeOfField f
+typeOfField f_
     | "" == f = QNone
     | isInt f = let g = abs $ read f 
         in if g <= 1 then QTInt else QInt
@@ -144,6 +150,7 @@ typeOfField f
     | isText f = QText
     | isChar f = QChar (length f)
     | otherwise = QNone
+    where f = strip f_
 
 -- END: type checkers
 typesOfLine :: Char -> String -> Types
